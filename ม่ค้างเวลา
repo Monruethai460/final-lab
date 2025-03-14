@@ -1,0 +1,98 @@
+#include <Arduino.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define DT 4
+#define SCK 5
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+long offset = 16.0;
+float scaleFactor = 40.0 / 16777216.0;
+
+const int IN1 = 7;  
+const int IN2 = 8;  
+const int ENA = 9;  
+const int IN = 13;
+const int SWITCH_PIN = 6;  
+
+long readHX710() {
+    long count = 0;
+    pinMode(DT, INPUT);
+    for (int i = 0; i < 24; i++) {
+        digitalWrite(SCK, HIGH);
+        delayMicroseconds(1);
+        count = count << 1;
+        digitalWrite(SCK, LOW);
+        if (digitalRead(DT)) count++;
+    }
+    digitalWrite(SCK, HIGH);
+    delayMicroseconds(1);
+    digitalWrite(SCK, LOW);
+    return count;
+}
+
+void setup() {
+    Serial.begin(9600);
+
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 allocation failed"));
+        while (true);
+    }
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.display();
+
+    pinMode(SCK, OUTPUT);
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT);
+    pinMode(IN, OUTPUT);
+    pinMode(ENA, OUTPUT);
+    pinMode(SWITCH_PIN, INPUT);
+}
+
+void controlSolenoid(bool state) {
+    digitalWrite(IN1, state ? HIGH : LOW);
+    digitalWrite(IN2, LOW);
+}
+
+void controlMotor(int speed) {
+    analogWrite(ENA, speed);
+}
+
+void loop() {
+    long rawValue = readHX710();
+    float pressure = ((rawValue * 1/80000) - offset);
+   
+    int switchState = digitalRead(SWITCH_PIN);
+    
+    if (switchState == HIGH) {
+        controlSolenoid(true);
+        controlMotor(150);  
+        digitalWrite(IN,HIGH);
+    }
+
+    if (pressure >= 60) {
+        controlSolenoid(false);
+        controlMotor(0);
+        digitalWrite(IN, LOW);
+    }
+
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setCursor(10, 20);
+    display.print("Pressure: ");
+    display.setCursor(10, 40);
+    display.print(pressure, 2);
+    display.print(" mmHg");
+    display.display();
+
+    Serial.print("Pressure: ");
+    Serial.print(pressure, 2);
+    Serial.println(" mmHg");
+
+    delay(100);
+}
