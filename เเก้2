@@ -1,0 +1,119 @@
+#include <Arduino.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define DT 4
+#define SCK 5
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+long offset = 15.0;
+float scaleFactor = 40.0 / 16777216.0;
+
+// พินควบคุมโซลินอยด์ (Solenoid) และมอเตอร์
+const int IN1 = 7;  // พินควบคุมโซลินอยด์ (Solenoid)
+const int IN2 = 8;  // พินควบคุมโซลินอยด์ (Solenoid)
+const int ENA = 9;  // พินควบคุมมอเตอร์ (Motor)
+const int IN = 13;
+// พินควบคุมสวิตช์ (Switch)
+const int SWITCH_PIN = 6;  // พินสวิตช์ (Input)
+int storedPressure;
+
+long readHX710() {
+    long count = 0;
+    pinMode(DT, INPUT);
+    for (int i = 0; i < 24; i++) {
+        digitalWrite(SCK, HIGH);
+        delayMicroseconds(1);
+        count = count << 1;
+        digitalWrite(SCK, LOW);
+        if (digitalRead(DT)) count++;
+    }
+    digitalWrite(SCK, HIGH);
+    delayMicroseconds(1);
+    digitalWrite(SCK, LOW);
+    return count;
+}
+
+void setup() {
+    Serial.begin(9600);
+
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 allocation failed"));
+        while (true);
+    }
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.display();
+
+    // ตั้งค่าพิน
+    pinMode(SCK, OUTPUT);
+    pinMode(IN1, OUTPUT); // ตั้งค่าโซลินอยด์เป็น OUTPUT // ตั้งค่าโซลินอยด์เป็น OUTPUT
+    pinMode(IN2, OUTPUT);
+    pinMode(IN, OUTPUT);
+    pinMode(ENA, OUTPUT); // ตั้งค่ามอเตอร์เป็น OUTPUT
+    pinMode(SWITCH_PIN, INPUT); // ตั้งค่าสวิตช์เป็น INPUT
+}
+
+void controlSolenoid(bool state) {
+    if (state) {
+        // เปิดโซลินอยด์ (เชื่อมต่อ IN1, IN2)
+        digitalWrite(IN, HIGH);
+      //  digitalWrite(IN2, LOW);
+    } else {
+        // ปิดโซลินอยด์
+        digitalWrite(IN, LOW);
+       // digitalWrite(IN2, LOW);
+    }
+}
+
+void controlMotor(int speed) {
+    // ควบคุมมอเตอร์ด้วยความเร็วที่กำหนด (ค่า 0-255)
+    analogWrite(ENA, speed);
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+
+}
+
+void stopMotor() {
+    // ควบคุมมอเตอร์ด้วยความเร็วที่กำหนด (ค่า 0-255)
+    analogWrite(ENA, 0);
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+
+}
+
+unsigned long pressureReachedTime = 0;
+bool isPressureHigh = false; // เวลารอ 3 วินาที
+int t=0;
+
+
+void loop() {
+    // อ่านสถานะของสวิตช์ (HIGH เมื่อกด, LOW เมื่อปล่อย)
+    int switchState = digitalRead(SWITCH_PIN);
+    
+    // ถ้าสวิตช์ถูกกด (HIGH) ให้เปิดโซลินอยด์และมอเตอร์
+    if (switchState == HIGH) {
+        controlSolenoid(true);  // เปิดโซลินอยด์
+        controlMotor(200);
+        long rawValue = readHX710();
+        float pressure = ((rawValue * 1/80000) - offset);
+        Serial.print(rawValue); Serial.print(" ");
+        Serial.println(pressure, 2);
+        delay(100);
+
+        if (pressure >=30)
+        {
+            stopMotor();
+            long rawValue = readHX710();
+            float pressure = ((rawValue * 1/80000) - offset);
+            Serial.print(rawValue); Serial.print(" ");
+            Serial.println(pressure, 2);
+            delay(100);
+        }
+        
+    }
+}
