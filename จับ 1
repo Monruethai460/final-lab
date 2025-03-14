@@ -1,0 +1,146 @@
+#include <Arduino.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define DT 4
+#define SCK 5
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const int IN1 = 7;
+const int IN2 = 8;
+const int ENA = 9;
+
+const int RELAY_PIN = 11;
+const int SWITCH_PIN = 6;  // พินสวิตช์ (Input)
+
+long offset = 16.00;
+float scaleFactor = 40.0/16777216.0;
+
+long readHX710() {
+   long count = 0;
+   pinMode(DT, INPUT);
+   for (int i = 0; i<24; i++) {
+     digitalWrite(SCK, HIGH);
+     delayMicroseconds(1);
+     count = count << 1;
+     digitalWrite(SCK, LOW);
+     if (digitalRead(DT)) count++;
+  }
+  digitalWrite(SCK, HIGH);
+  delayMicroseconds(1);
+  digitalWrite(SCK, LOW);
+  return count;
+}
+
+void setup() {
+  Serial.begin(9600);
+  if(!display.begin(SSD1306_SWITCHCAPVCC,0x3C)){
+    Serial.println(F("SSD1306 allocation failed"));
+    while (true); 
+  }
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.display();
+
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(ENA, OUTPUT);
+
+  pinMode(SCK, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(SWITCH_PIN, INPUT); // ตั้งค่าสวิตช์เป็น INPUT
+}
+
+void controlSolenoid(bool state) {
+  if (state) {
+      digitalWrite(IN1, HIGH);
+      digitalWrite(IN2, LOW);
+  } else {
+      digitalWrite(IN1, LOW);
+      digitalWrite(IN2, LOW);
+  }
+}
+
+void controlMotor(int speed) {
+  analogWrite(ENA, speed);
+}
+
+unsigned long pressureReachedTime = 0;
+unsigned long switchPressTime = 0;
+bool isPressureHigh = false;  // ใช้บันทึกสถานะเมื่อแรงดันถึง 70
+bool isReleaseStarted = false; // ใช้บันทึกสถานะการปล่อยลม
+
+void loop() {
+   long rawValue = readHX710();
+   float pressure = ((rawValue * 1/80000)- offset);
+   int switchState = digitalRead(SWITCH_PIN);
+
+   // เมื่อกดสวิตช์ ให้เริ่มจับเวลา
+   if (switchState == HIGH && switchPressTime == 0) {
+      switchPressTime = millis();  // เริ่มจับเวลาเมื่อกดสวิตช์
+      controlSolenoid(true); 
+      controlMotor(150); 
+      digitalWrite(RELAY_PIN, HIGH);
+   }
+
+   // แสดงเวลาในหน้าจอ OLED
+   unsigned long timeElapsed = millis() - switchPressTime;
+   unsigned long remainingTime = 40000 - (millis() - pressureReachedTime);
+
+   // หากความดันถึง 70 mmHg
+   if (pressure >= 70 && !isPressureHigh) {
+      isPressureHigh = true;
+      pressureReachedTime = millis();
+      controlMotor(0); // หยุดมอเตอร์ทันที
+      controlSolenoid(false);  // ปิดโซลินอยด์ทันทีที่แรงดันถึง 70
+   }
+
+   // คงแรงดันที่ 70 mmHg
+   if (isPressureHigh && pressure >= 70 && pressure < 75) {
+      controlSolenoid(false);  // ไม่เปิดโซลินอยด์เพิ่ม
+   } else if (isPressureHigh && pressure < 70) {
+      controlSolenoid(true);  // เปิดโซลินอยด์เล็กน้อยเพื่อเพิ่มความดัน
+   }
+
+   // ค้างที่แรงดัน 70 mmHg เป็นเวลา 40 วินาที
+   if (isPressureHigh && millis() - pressureReachedTime >= 0 && millis() - pressureReachedTime < 40000) {
+      Serial.print("Pressure during 40s: ");
+      Serial.println(pressure, 2);  // แสดงค่าความดันที่เก็บไว้
+
+      display.clearDisplay();
+      display.setTextSize(1);
+      display.setCursor(0, 0);
+      display.print("Elapsed Time: ");
+      display.print(timeElapsed / 1000);  // แสดงเวลาเป็นวินาที
+      display.print(" sec");
+
+      display.setCursor(0, 20);
+      display.print("Pressure: ");
+      display.print(pressure, 2);
+      display.println(" mmHg");
+
+      display.display();
+   }
+
+   // หลังจากผ่านไป 40 วินาทีให้ปล่อยลมออก
+   if (isPressureHigh && millis() - pressureReachedTime >= 40000 && !isReleaseStarted) {
+      isReleaseStarted = true;  // ตั้งค่าสถานะการปล่อยลม
+      controlSolenoid(true);  // เปิดโซลินอยด์เพื่อปล่อยลมออก
+      Serial.println("Releasing air...");
+   }
+
+   // ปล่อยลมออกหลังจาก 40 วินาที
+   if (isReleaseStarted && millis() - pressureReachedTime >= 40000) {
+      controlSolenoid(false);  // ปิดโซลินอยด์หลังจากปล่อยลม
+      digitalWrite(RELAY_PIN, LOW);  // ปิดมอเตอร์
+      isPressureHigh = false;  // รีเซ็ตสถานะ
+      isReleaseStarted = false; // รีเซ็ตสถานะการปล่อยลม
+   }
+
+   delay(100);
+}
