@@ -1,0 +1,103 @@
+#include <Arduino.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define DT 4
+#define SCK 5
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+long offset = 15.0;
+float scaleFactor = 40.0 / 16777216.0;
+
+// พินควบคุมโซลินอยด์ (Solenoid) และมอเตอร์
+const int IN1 = 7;  
+const int IN2 = 8;  
+const int ENA = 9;  
+const int IN = 13;  
+const int SWITCH_PIN = 6;  
+
+bool isRunning = false;  // ตัวแปรสถานะ กด 1 ครั้งให้ทำงานต่อเนื่อง
+
+long readHX710() {
+    long count = 0;
+    pinMode(DT, INPUT);
+    for (int i = 0; i < 24; i++) {
+        digitalWrite(SCK, HIGH);
+        delayMicroseconds(1);
+        count = count << 1;
+        digitalWrite(SCK, LOW);
+        if (digitalRead(DT)) count++;
+    }
+    digitalWrite(SCK, HIGH);
+    delayMicroseconds(1);
+    digitalWrite(SCK, LOW);
+    return count;
+}
+
+void setup() {
+    Serial.begin(9600);
+    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+        Serial.println(F("SSD1306 allocation failed"));
+        while (true);
+    }
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.display();
+
+    pinMode(SCK, OUTPUT);
+    pinMode(IN1, OUTPUT); 
+    pinMode(IN2, OUTPUT);
+    pinMode(IN, OUTPUT);
+    pinMode(ENA, OUTPUT);
+    pinMode(SWITCH_PIN, INPUT);
+}
+
+void controlSolenoid(bool state) {
+    digitalWrite(IN, state ? HIGH : LOW);
+}
+
+void controlMotor(int speed) {
+    analogWrite(ENA, speed);
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+}
+
+void stopMotor() {
+    Serial.println("Motor Stopped!");
+    analogWrite(ENA, 0);
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+}
+
+void loop() {
+    int switchState = digitalRead(SWITCH_PIN);
+
+    // ถ้ากดปุ่ม และยังไม่ทำงาน ให้เริ่มทำงาน
+    if (switchState == HIGH && !isRunning) {
+        isRunning = true;
+        controlSolenoid(true);
+        controlMotor(200);
+        Serial.println("Motor Started!");
+    }
+
+    // ถ้า isRunning เป็น true ให้ทำงานต่อไป
+    if (isRunning) {
+        long rawValue = readHX710();
+        float pressure = ((rawValue * 1.0 / 80000) - offset);
+        Serial.print("Pressure: ");
+        Serial.println(pressure, 2);
+
+        // ถ้าความดันถึง 30 ให้หยุด
+        if (pressure >= 70) {
+            stopMotor();
+            controlSolenoid(false);
+            isRunning = false;  // หยุดทำงาน
+        }
+    }
+
+    delay(100);
+}
